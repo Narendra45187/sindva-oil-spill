@@ -53,10 +53,19 @@ SCENE = {
 
 app = FastAPI(title="SINDVA Marine Watch — Detection Service")
 
+# Deployment note: the frontend isn't on a fixed domain yet (local dev on
+# localhost:3000, plus a future Netlify deploy), and this API carries no
+# cookies/session auth for any request -- so the simplest correct config
+# for the prototype is to allow every origin. Wildcard "*" and
+# allow_credentials=True are mutually exclusive per the CORS spec (browsers
+# reject that combination outright); since nothing here relies on
+# credentialed requests, allow_credentials stays False rather than pinning
+# this to a single origin. Tighten to an explicit origin list once the
+# Netlify domain is known, if that matters later.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

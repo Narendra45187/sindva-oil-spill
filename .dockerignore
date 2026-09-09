@@ -1,0 +1,20 @@
+# Keep the Docker build context small -- this image only needs backend/.
+frontend/
+.git/
+.claude/
+README.md
+
+# Backend runtime-generated data -- regenerated automatically at startup /
+# on first request, not needed in the image (the sample scene + AIS CSV
+# under backend/data/images and backend/data/ais ARE needed and are not
+# excluded here).
+backend/data/outputs/
+backend/data/incidents/*.json
+backend/data/weather_cache.json
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*

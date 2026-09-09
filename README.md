@@ -1,6 +1,33 @@
+---
+title: Sindva Marine Watch
+emoji: 🌊
+colorFrom: blue
+colorTo: cyan
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # SINDVA Marine Watch — SIH26143
 
 Satellite Oil-Spill Detection & AIS Vessel Attribution dashboard for Visakhapatnam, Bay of Bengal.
+
+## Deployment (Hugging Face Spaces, Docker SDK)
+
+The YAML block at the top of this file is Hugging Face Spaces' required
+config header — it tells the Space to build the root `Dockerfile` (Docker
+SDK) and route traffic to port `7860`, which is what that Dockerfile's
+`uvicorn` command listens on. The Dockerfile builds **only the backend**
+(`backend/`) — the frontend deploys separately (e.g. Netlify) and calls
+this Space's URL as its API base.
+
+To deploy: create a new Space on Hugging Face with the Docker SDK, and
+either push this repo to the Space's own git remote, or connect it to this
+GitHub repo. No other configuration is required — the Dockerfile installs
+system GDAL before `pip install`-ing `rasterio` (see the Dockerfile's own
+comments for why that order matters), and the sample scene/AIS CSV under
+`backend/data/` ship in the image so the Space works immediately without
+any manual data upload.
 
 Two independent servers — run both at once:
 
