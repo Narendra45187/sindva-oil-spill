@@ -1,0 +1,39 @@
+# --- Node / Next.js (frontend) ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Python (backend) ---
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Backend runtime-generated data (regenerated automatically at
+#     startup / on first request -- not needed in version control).
+#     The sample synthetic scene and demo AIS track ARE kept, since the
+#     app needs them to run out of the box after a fresh clone. ---
+backend/data/outputs/
+backend/data/incidents/*.json
+backend/data/weather_cache.json
+
+# --- Editor / OS cruft ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- This tool's local session config (not app source) ---
+.claude/

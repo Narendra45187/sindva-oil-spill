@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0e14;
+  --panel: #111a26;
+  --line: #1e2b3a;
+  --accent: #22d3ee;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --green: #22c55e;
+  --yellow: #ffdd00;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-amber: var(--amber);
+  --color-red: var(--red);
+  --color-green: var(--green);
+  --color-yellow: var(--yellow);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-wordmark: var(--font-wordmark-family);
+}
+
+body {
+  background:
+    radial-gradient(ellipse 1200px 800px at 20% -10%, rgba(34, 211, 238, 0.06), transparent),
+    radial-gradient(ellipse 1000px 700px at 100% 110%, rgba(34, 211, 238, 0.04), transparent),
+    var(--bg);
+  color: #cbd5e1;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Thin dark scrollbars for panels */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+/* Leaflet container must fill its wrapper */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #0a0e14;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+.leaflet-control-attribution {
+  background: rgba(10, 14, 20, 0.7) !important;
+  color: #64748b !important;
+}
+.leaflet-control-attribution a {
+  color: #94a3b8 !important;
+}
+.leaflet-control-zoom a {
+  background: var(--panel) !important;
+  color: #94a3b8 !important;
+  border-color: var(--line) !important;
+}
+.leaflet-control-zoom a:hover {
+  color: var(--accent) !important;
+}
+
+/* Pulsing spill-centroid marker */
+.spill-marker {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+.spill-marker::before,
+.spill-marker::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--yellow);
+}
+.spill-marker::before {
+  animation: spill-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  opacity: 0.6;
+}
+.spill-marker::after {
+  inset: 4px;
+  box-shadow: 0 0 8px 2px rgba(255, 221, 0, 0.9);
+}
+@keyframes spill-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  75%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Scanning sweep animation for the "analyzing" state */
+@keyframes scan-sweep {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+.scan-sweep {
+  animation: scan-sweep 1.6s linear infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+/* Reports page (/reports): the report itself renders as a light "paper"
+   sheet even on-screen (a deliberate contrast with the app's dark
+   command-center chrome around it), so print output needs to strip away
+   only that surrounding chrome and the sheet's screen-only decoration --
+   the sheet's own colors are already print-appropriate as-is. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  main:has(.report-sheet) {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .report-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
+}
