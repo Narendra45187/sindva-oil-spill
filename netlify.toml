@@ -1,0 +1,25 @@
+# Netlify build config for the Next.js frontend, which lives in frontend/
+# within this repo (the backend deploys separately -- see the root
+# Dockerfile / Hugging Face Space, live at
+# https://sindva-oil-spill.onrender.com). `base` scopes the whole build to
+# that subdirectory, so `command` and `publish` below are both resolved
+# relative to frontend/ without needing a separate "base directory"
+# setting in the Netlify site's own dashboard.
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Official Netlify adapter for Next.js -- handles SSR, the App Router,
+# image optimization, etc. automatically from the standard `.next` build
+# output; no manual redirects/functions setup needed.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# NEXT_PUBLIC_API_URL (the live backend base URL) is intentionally NOT set
+# here -- set it in the Netlify dashboard (Site configuration -> Environment
+# variables) instead, so the Render URL doesn't need to live in source
+# control. Value to use: https://sindva-oil-spill.onrender.com

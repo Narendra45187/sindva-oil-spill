@@ -1,4 +1,7 @@
-export const API_BASE = "http://localhost:8000";
+// Set NEXT_PUBLIC_API_URL in the deploy environment (e.g. Netlify) to
+// point at the live backend; falls back to localhost for local dev when
+// the var isn't set.
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export const DEFAULT_SCENE = {
   name: "Visakhapatnam Port, Bay of Bengal",
