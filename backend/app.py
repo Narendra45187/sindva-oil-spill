@@ -19,6 +19,26 @@ from origin.estimate_origin import DEFAULT_DRIFT_MINUTES, estimate_origin
 from origin.forecast_drift import DEFAULT_HORIZON_HOURS, forecast_drift
 from weather.weather import get_conditions, get_forecast
 
+# ml_detect imports torch, which on some machines (this one, currently)
+# gets blocked at DLL-load time by Windows Smart App Control -- the same
+# class of issue this project already hit with rasterio (see
+# requirements.txt's comment on the pinned version). That's an OS security
+# policy blocking an unrecognized-reputation DLL, not a bug in ml_detect.py
+# itself (it has run real inference successfully on this same machine
+# before). Importing it defensively means a torch load failure only takes
+# down /api/detect_ml -- every other endpoint (classic-CV detection, AIS,
+# weather, origin, forecast, fusion, ...) has zero dependency on torch and
+# must keep working regardless.
+try:
+    from detection import ml_detect
+
+    ML_DETECT_IMPORT_ERROR: str | None = None
+except Exception as exc:  # noqa: BLE001 -- deliberately broad: any import-time
+    # failure here (DLL block, missing weights file, etc.) must degrade to
+    # "/api/detect_ml unavailable", never crash the whole app.
+    ml_detect = None
+    ML_DETECT_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(BASE_DIR, "data", "images")
 OUTPUTS_DIR = os.path.join(BASE_DIR, "data", "outputs")
@@ -114,6 +134,10 @@ async def detect(file: UploadFile | None = File(default=None)):
         "region_count": result["region_count"],
         "regions": result["regions"],
         "timestamp": timestamp,
+        # Additive field, does not change this endpoint's existing shape:
+        # lets the frontend label which detector produced a result, now
+        # that /api/detect_ml exists as an alternative.
+        "detection_method": "Classic CV",
     }
 
     overlay_url = f"/outputs/{result['overlay_filename']}"
@@ -134,6 +158,92 @@ async def detect(file: UploadFile | None = File(default=None)):
     # A fresh detection makes any prior correlation stale (it was measured
     # against the previous spill's centroid) -- clear it so the report
     # endpoint doesn't attribute a new spill to an old suspect list.
+    if os.path.exists(LATEST_CORRELATION_PATH):
+        os.remove(LATEST_CORRELATION_PATH)
+
+    return {
+        "meta": meta,
+        "bounds": bounds,
+        "scene": SCENE,
+        "overlay_url": overlay_url,
+        "mask_url": mask_url,
+    }
+
+
+@app.post("/api/detect_ml")
+async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
+    """AI/U-Net detection -- an ALTERNATIVE to /api/detect (Classic CV),
+    which is completely untouched by this endpoint. Mirrors /api/detect's
+    structure and response shape exactly (same meta fields plus
+    detection_method, same side-effect persistence to SPILL_METADATA_PATH
+    so /api/correlate and the rest of the pipeline work identically
+    afterward, regardless of which detector produced the spill), just
+    calling ml_detect.detect_ml() instead of cv_detect.run()."""
+    if ml_detect is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AI/U-Net detection is unavailable on this server: torch failed to load "
+                f"({ML_DETECT_IMPORT_ERROR}). Classic-CV detection (/api/detect) is unaffected."
+            ),
+        )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+
+    tmp_path = None
+    if file is not None:
+        suffix = os.path.splitext(file.filename or "")[1].lower() or ".tiff"
+        if suffix not in ml_detect.ACCEPTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported file type '{suffix}' for AI detection -- "
+                    f"accepts {', '.join(ml_detect.ACCEPTED_EXTENSIONS)}."
+                ),
+            )
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir=IMAGES_DIR)
+        with os.fdopen(tmp_fd, "wb") as tmp_file:
+            shutil.copyfileobj(file.file, tmp_file)
+        image_path = tmp_path
+    else:
+        if not os.path.exists(DEFAULT_IMAGE):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Default scene not found. Generate it with "
+                    "`py -3.12 backend/make_synthetic.py`, or upload a GeoTIFF."
+                ),
+            )
+        image_path = DEFAULT_IMAGE
+
+    try:
+        result = ml_detect.detect_ml(image_path, OUTPUTS_DIR, timestamp)
+        # ml_detect's own bounds helper (not cv_detect's): falls back to a
+        # synthetic Visakhapatnam-bay box instead of raising when the
+        # upload (e.g. a plain PNG/JPG) has no real georeferencing.
+        bounds = ml_detect.image_bounds(image_path)
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    meta = {
+        "detected": result["detected"],
+        "centroid": result["centroid"],
+        "area_km2": result["area_km2"],
+        "region_count": result["region_count"],
+        "regions": result["regions"],
+        "timestamp": timestamp,
+        "detection_method": ml_detect.DETECTION_METHOD_ML,
+    }
+
+    overlay_url = f"/outputs/{result['overlay_filename']}"
+    mask_url = f"/outputs/{result['mask_filename']}"
+
+    with open(SPILL_METADATA_PATH, "w") as f:
+        json.dump(
+            {**meta, "scene_timestamp": SCENE["timestamp"], "overlay_url": overlay_url, "mask_url": mask_url},
+            f,
+        )
     if os.path.exists(LATEST_CORRELATION_PATH):
         os.remove(LATEST_CORRELATION_PATH)
 

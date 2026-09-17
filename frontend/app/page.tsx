@@ -32,6 +32,10 @@ export default function Home() {
   const [result, setResult] = useState<DetectResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which button is in flight, purely so each shows its own loading label
+  // while sharing the same `loading`/`error` state (only one detection
+  // request is ever in flight at a time either way).
+  const [runningMethod, setRunningMethod] = useState<"cv" | "ml" | null>(null);
 
   const [correlation, setCorrelation] = useState<CorrelateResponse | null>(null);
   const [correlating, setCorrelating] = useState(false);
@@ -151,14 +155,15 @@ export default function Home() {
   }, []);
 
   const runDetection = useCallback(
-    async (file?: File) => {
+    async (file?: File, endpoint: "/api/detect" | "/api/detect_ml" = "/api/detect") => {
       setLoading(true);
       setError(null);
+      setRunningMethod(endpoint === "/api/detect_ml" ? "ml" : "cv");
       try {
         const formData = new FormData();
         if (file) formData.append("file", file);
 
-        const res = await fetch(`${API_BASE}/api/detect`, {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           body: formData,
         });
@@ -247,7 +252,10 @@ export default function Home() {
             loading={loading}
             error={error}
             onAnalyze={() => runDetection()}
+            onAnalyzeML={() => runDetection(undefined, "/api/detect_ml")}
             onUpload={(file) => runDetection(file)}
+            onUploadML={(file) => runDetection(file, "/api/detect_ml")}
+            runningMethod={runningMethod}
             weather={weather}
             weatherLoading={weatherLoading}
             weatherError={weatherError}

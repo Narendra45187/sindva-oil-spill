@@ -41,7 +41,10 @@ interface ScenePanelProps {
   loading: boolean;
   error: string | null;
   onAnalyze: () => void;
+  onAnalyzeML: () => void;
   onUpload: (file: File) => void;
+  onUploadML: (file: File) => void;
+  runningMethod: "cv" | "ml" | null;
   weather: WeatherConditions | null;
   weatherLoading: boolean;
   weatherError: string | null;
@@ -70,7 +73,10 @@ export default function ScenePanel({
   loading,
   error,
   onAnalyze,
+  onAnalyzeML,
   onUpload,
+  onUploadML,
+  runningMethod,
   weather,
   weatherLoading,
   weatherError,
@@ -129,7 +135,7 @@ export default function ScenePanel({
           disabled={loading}
           className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border border-accent/40 bg-accent/10 px-4 py-2.5 text-sm font-semibold text-accent transition hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {loading && (
+          {loading && runningMethod === "cv" && (
             <span className="absolute inset-0 overflow-hidden">
               <span className="scan-sweep absolute inset-x-0 h-1/3 bg-gradient-to-b from-transparent via-accent/20 to-transparent" />
             </span>
@@ -138,7 +144,32 @@ export default function ScenePanel({
             <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
             <path d="M21 21l-4.3-4.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
-          {loading ? "Analyzing Scene…" : "Analyze Visakhapatnam Scene"}
+          {loading && runningMethod === "cv" ? "Analyzing Scene…" : "Analyze Visakhapatnam Scene"}
+        </button>
+
+        {/* AI/U-Net detection -- a genuinely different detector (a trained
+            segmentation model, see backend/detection/ml_detect.py) offered
+            alongside the classic-CV one above, never replacing it. */}
+        <button
+          onClick={onAnalyzeML}
+          disabled={loading}
+          className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border border-yellow/40 bg-yellow/10 px-4 py-2.5 text-sm font-semibold text-yellow transition hover:bg-yellow/20 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading && runningMethod === "ml" && (
+            <span className="absolute inset-0 overflow-hidden">
+              <span className="scan-sweep absolute inset-x-0 h-1/3 bg-gradient-to-b from-transparent via-yellow/20 to-transparent" />
+            </span>
+          )}
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none">
+            <path
+              d="M12 2.5 4.5 6v6c0 5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-4.5 7.5-9.5V6L12 2.5Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinejoin="round"
+            />
+            <path d="M9 12.2l2 2 4-4.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {loading && runningMethod === "ml" ? "Running AI Detection…" : "Detect with AI (U-Net)"}
         </button>
 
         <div className="mt-1 flex items-center gap-2">
@@ -148,16 +179,28 @@ export default function ScenePanel({
         </div>
 
         <label className="flex w-full cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed border-line px-4 py-3 text-center transition hover:border-accent/40 hover:bg-white/[0.02]">
-          <span className="text-xs font-medium text-slate-300">Upload SAR GeoTIFF</span>
-          <span className="text-[10px] text-slate-500">.tif / .tiff scenes</span>
+          <span className="text-xs font-medium text-slate-300">Upload Scene</span>
+          <span className="text-[10px] text-slate-500">.tif / .tiff (Classic CV) · .png / .jpg (AI)</span>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".tif,.tiff,image/tiff"
+            accept=".tif,.tiff,image/tiff,.png,image/png,.jpg,.jpeg,image/jpeg"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) onUpload(f);
+              if (f) {
+                // .tif/.tiff go through the SAME classic-CV path as
+                // before, unchanged; .png/.jpg only make sense for the ML
+                // model (a real georeferenced SAR band is what the
+                // classic detector's dark-anomaly algorithm needs), so
+                // those are routed to the AI endpoint instead.
+                const isRasterImage = /\.(png|jpe?g)$/i.test(f.name);
+                if (isRasterImage) {
+                  onUploadML(f);
+                } else {
+                  onUpload(f);
+                }
+              }
               e.target.value = "";
             }}
           />
@@ -184,12 +227,25 @@ export default function ScenePanel({
 
         {loading && (
           <p className="py-4 text-center text-xs text-accent">
-            Running SAR dark-spot detection…
+            {runningMethod === "ml" ? "Running U-Net segmentation…" : "Running SAR dark-spot detection…"}
           </p>
         )}
 
         {meta && !loading && (
           <div className="flex flex-col gap-3">
+            {/* Which detector produced this result -- classic-CV and
+                AI/U-Net are alternatives, never silently swapped. */}
+            <div
+              className={`flex items-center justify-between rounded-md border px-2.5 py-1.5 text-[11px] ${
+                meta.detection_method === "AI / U-Net"
+                  ? "border-yellow/30 bg-yellow/5 text-yellow"
+                  : "border-line bg-white/[0.02] text-slate-400"
+              }`}
+            >
+              <span className="uppercase tracking-wider">Detection method</span>
+              <span className="font-mono font-semibold">{meta.detection_method}</span>
+            </div>
+
             {/* Classification badge for the primary (highest-oil-confidence) region */}
             {primary && primaryStyle ? (
               <div

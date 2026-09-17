@@ -41,6 +41,7 @@ export interface DetectionMeta {
   region_count: number;
   regions: DetectedRegion[];
   timestamp: string;
+  detection_method: "Classic CV" | "AI / U-Net";
 }
 
 export interface DetectResponse {

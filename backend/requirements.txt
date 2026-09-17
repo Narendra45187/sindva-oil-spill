@@ -10,3 +10,14 @@ opencv-python-headless
 numpy
 pandas
 requests
+# ML detection (backend/detection/ml_detect.py) -- CPU inference only, no
+# GPU/CUDA needed. Installed locally via the PyTorch CPU wheel index:
+#   py -3.12 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# (plain `pip install torch` also works, but pulls PyTorch's much larger
+# default CUDA build; use the command above to get the small CPU-only one.)
+torch
+torchvision
+# Loads uploaded images (png/jpg/jpeg/tif/tiff) for the ML detection path
+# exactly as training did -- already installed transitively via
+# torchvision, declared directly here since ml_detect.py imports it itself.
+Pillow
