@@ -56,7 +56,7 @@ Place a real Sentinel-1 GeoTIFF at `backend/data/images/vizag.tiff` — this is 
 > by Smart App Control. If you ever bump this pin, re-test `py -3.12 -c "import rasterio"`
 > before relying on it.
 
-## 2. Frontend (dashboard)
+## 2. Frontend (dashboard) by Next.js
 
 ```
 cd frontend
