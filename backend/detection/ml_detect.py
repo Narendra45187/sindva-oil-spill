@@ -75,7 +75,6 @@ from detection.cv_detect import (  # noqa: E402
     LABEL_FONT_SCALE,
     LABEL_THICKNESS,
     MAX_REGIONS,
-    MIN_REGION_PIXELS,
     OUTLINE_ALPHA,
     OUTLINE_THICKNESS_PX,
     _classification_from_confidence,
@@ -88,7 +87,15 @@ from weather.weather import get_conditions  # noqa: E402
 
 WEIGHTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sindva_unet_oilspill.pth")
 MODEL_INPUT_SIZE = 256
+
+# Primary probability threshold (oil = sigmoid output >= this). If it finds
+# nothing at all after cleanup, detect_ml() retries once at
+# MASK_THRESHOLD_FALLBACK before giving up -- a real spill the model is
+# genuinely unsure about (e.g. thin sheen, hazy SOS crop) can peak below
+# 0.5 without being noise, so a single looser retry is cheap insurance
+# against reporting "0 regions" when the model actually saw something.
 MASK_THRESHOLD = 0.5
+MASK_THRESHOLD_FALLBACK = 0.3
 
 DETECTION_METHOD_ML = "AI / U-Net"
 
@@ -96,17 +103,23 @@ DETECTION_METHOD_ML = "AI / U-Net"
 # untouched and keeps its own, separate .tif/.tiff-only expectation).
 ACCEPTED_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
-# Same size floor as the classic detector, so ML-side speckle/noise blobs
-# are filtered out the same way (not a shared code path, just a shared,
-# deliberately identical constant -- imported, not redefined).
-_MIN_REGION_PIXELS = MIN_REGION_PIXELS
+# Noise floor for the ML path's own cleanup -- deliberately its OWN,
+# smaller constant rather than reusing cv_detect.MIN_REGION_PIXELS (500).
+# That value is tuned for the classic detector's large-scene SAR rasters;
+# real single-scene SOS crops run through this model are often much
+# smaller images, where a genuine (if modest) oil region can be well under
+# 500px. Using the classic detector's floor here was silently discarding
+# real ML detections -- part of the "0 regions found" bug.
+_ML_MIN_REGION_PIXELS = 25
 
 # Cleanup thresholds for the model's raw binary mask (see _clean_mask()):
 # a component smaller than this many pixels is noise, not a candidate
 # region; a mask still covering more than this fraction of the frame after
 # noise removal reads as an unfocused blob rather than a genuine slick, so
-# only its single largest component is kept.
-_MAX_AREA_FRACTION = 0.40
+# only its single largest component is kept. Raised from 0.40 to 0.60 --
+# 40% was aggressive enough to collapse legitimate multi-region or
+# large-but-real spill predictions down to a single component.
+_MAX_AREA_FRACTION = 0.60
 
 # Fallback bounding box (EPSG:4326) for uploads with no embedded
 # georeferencing (a plain PNG/JPG, or a TIFF without geo metadata) -- the
@@ -232,16 +245,28 @@ def image_bounds(image_path: str) -> dict:
     return {"south": south, "west": west, "north": north, "east": east}
 
 
+def _log(message: str) -> None:
+    # print(flush=True), not the logging module -- guaranteed to land in
+    # Render's captured stdout regardless of any logging config, so the
+    # diagnostic numbers below are visible in the live deploy's logs
+    # without any extra setup.
+    print(f"[ml_detect] {message}", flush=True)
+
+
 def _run_inference(gray_uint8: np.ndarray):
     """gray_uint8: original-resolution 0-255 grayscale, loaded by
     _load_grayscale_uint8() -- i.e. exactly what training used, not
-    cv_detect's contrast-stretched band. Returns (binary_mask, prob_map),
-    both resized back to the ORIGINAL resolution -- binary_mask is 0/255
-    uint8, prob_map is the model's raw 0-1 probability per pixel (used
-    only to score each region's oil_confidence afterward).
+    cv_detect's contrast-stretched band. Returns (prob_map, probs_256):
+    prob_map is the model's raw 0-1 probability per pixel resized back to
+    the ORIGINAL resolution (used both to threshold and to score each
+    region's oil_confidence afterward); probs_256 is the same probabilities
+    at the model's native 256x256 output, kept separately so callers can
+    log true min/max/mean stats before any resampling blurs them.
 
     Preprocessing here matches training exactly: resize to 256x256,
-    normalize by dividing by 255.0, sigmoid, threshold at 0.5."""
+    normalize by dividing by 255.0, sigmoid. Thresholding is NOT done here
+    -- see _binarize_and_clean() -- so a caller can try more than one
+    threshold against the same model output without rerunning inference."""
     h, w = gray_uint8.shape
     resized = cv2.resize(gray_uint8, (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE), interpolation=cv2.INTER_AREA)
     normalized = resized.astype(np.float32) / 255.0
@@ -252,24 +277,44 @@ def _run_inference(gray_uint8: np.ndarray):
         logits = model(tensor)
         probs_256 = torch.sigmoid(logits)[0, 0].numpy().astype(np.float32)  # (256, 256), 0-1
 
-    binary_256 = (probs_256 >= MASK_THRESHOLD).astype(np.uint8) * 255
-    mask = cv2.resize(binary_256, (w, h), interpolation=cv2.INTER_NEAREST)
     prob_map = cv2.resize(probs_256, (w, h), interpolation=cv2.INTER_LINEAR)
-    return mask, prob_map
+    return prob_map, probs_256
+
+
+def _binarize_and_clean(prob_map: np.ndarray, threshold: float):
+    """Threshold prob_map (oil where probability >= threshold -- sigmoid
+    output > 0.5 is class 1 / oil, per training; never inverted) at the
+    ORIGINAL resolution, then run the same morphological open/close +
+    connected-components cleanup detect_ml() always has. Returns
+    (cleaned_mask, raw_oil_px, cleaned_px) so the caller can log both the
+    model's raw prediction size and what survives cleanup -- the two
+    numbers that tell apart "model isn't predicting oil" from "cleanup is
+    deleting a real prediction"."""
+    raw_mask = (prob_map >= threshold).astype(np.uint8) * 255
+    raw_oil_px = int(np.count_nonzero(raw_mask))
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    cleaned = cv2.morphologyEx(raw_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=1)
+    cleaned = _clean_mask(cleaned)
+    cleaned_px = int(np.count_nonzero(cleaned))
+
+    return cleaned, raw_oil_px, cleaned_px
 
 
 def _clean_mask(mask: np.ndarray) -> np.ndarray:
     """Binary mask cleanup via connected components: drop specks smaller
-    than _MIN_REGION_PIXELS (noise, not a candidate spill), then, if what's
-    left still covers more than _MAX_AREA_FRACTION of the frame, keep only
-    the single largest surviving component -- a diffuse prediction that
-    size is reading as an unfocused blob rather than a genuine slick, so
-    this keeps the result a focused shape instead of the whole frame."""
+    than _ML_MIN_REGION_PIXELS (noise, not a candidate spill), then, if
+    what's left still covers more than _MAX_AREA_FRACTION of the frame,
+    keep only the single largest surviving component -- a diffuse
+    prediction that size is reading as an unfocused blob rather than a
+    genuine slick, so this keeps the result a focused shape instead of the
+    whole frame."""
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     total_px = mask.shape[0] * mask.shape[1]
 
     components = [(i, int(stats[i, cv2.CC_STAT_AREA])) for i in range(1, num_labels)]
-    components = [(i, area) for i, area in components if area >= _MIN_REGION_PIXELS]
+    components = [(i, area) for i, area in components if area >= _ML_MIN_REGION_PIXELS]
     if not components:
         return np.zeros_like(mask)
 
@@ -294,23 +339,49 @@ def detect_ml(image_path: str, out_dir: str, timestamp: str) -> dict:
     gray = _load_grayscale_uint8(image_path)
     src_transform, src_crs = _read_georeferencing(image_path, gray.shape)
 
-    mask, prob_map = _run_inference(gray)
+    prob_map, probs_256 = _run_inference(gray)
 
-    # Light morphological cleanup first (smooth speckly edges, close small
-    # gaps -- same purpose as cv_detect's own use of this, lighter since
-    # the model's mask is already a learned segmentation, not a raw
-    # thresholded anomaly map), then connected-components cleanup: drop
-    # noise specks and, if the prediction is still an unfocused blob,
-    # focus down to its largest component (see _clean_mask()).
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=1)
-    cleaned = _clean_mask(cleaned)
+    # Diagnostic 1: is the model predicting oil at all? Raw sigmoid stats
+    # at the model's native 256x256 output (before any resize/cleanup can
+    # touch them) plus how many of those 65536 pixels clear the primary
+    # threshold. min/max/mean all near 0 means preprocessing is feeding the
+    # model something it doesn't recognize as oil; a healthy max/mean with
+    # 0 surviving regions further down means cleanup is the culprit instead.
+    _log(
+        f"raw sigmoid stats: min={float(probs_256.min()):.4f} "
+        f"max={float(probs_256.max()):.4f} mean={float(probs_256.mean()):.4f} "
+        f"pixels>={MASK_THRESHOLD}={int(np.count_nonzero(probs_256 >= MASK_THRESHOLD))}/{probs_256.size}"
+    )
+
+    # Threshold at MASK_THRESHOLD (oil = sigmoid > 0.5, per training --
+    # never inverted) and clean up. If that finds literally nothing after
+    # cleanup, retry once at the looser MASK_THRESHOLD_FALLBACK rather than
+    # reporting "0 regions" outright -- a real but low-confidence spill can
+    # peak just under 0.5 without being noise.
+    cleaned, raw_oil_px, cleaned_px = _binarize_and_clean(prob_map, MASK_THRESHOLD)
+    threshold_used = MASK_THRESHOLD
+    if cleaned_px == 0 and raw_oil_px > 0:
+        _log(
+            f"threshold {MASK_THRESHOLD} found {raw_oil_px} raw oil px but 0 survived "
+            f"cleanup -- retrying at fallback threshold {MASK_THRESHOLD_FALLBACK}"
+        )
+    if cleaned_px == 0:
+        cleaned, raw_oil_px, cleaned_px = _binarize_and_clean(prob_map, MASK_THRESHOLD_FALLBACK)
+        threshold_used = MASK_THRESHOLD_FALLBACK
 
     contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates = [(cv2.contourArea(c), c) for c in contours if cv2.contourArea(c) >= _MIN_REGION_PIXELS]
+    candidates = [(cv2.contourArea(c), c) for c in contours if cv2.contourArea(c) >= _ML_MIN_REGION_PIXELS]
     candidates.sort(key=lambda item: item[0], reverse=True)
     contour_list = [c for _, c in candidates[:MAX_REGIONS]]
+
+    # Diagnostic 2: what made it through thresholding + cleanup. Compared
+    # against Diagnostic 1 above, this is what tells "model isn't
+    # predicting oil" (raw pixels near 0 too) apart from "cleanup deleted a
+    # real prediction" (raw pixels high, cleaned_px/regions near 0).
+    _log(
+        f"threshold_used={threshold_used} raw_oil_px(before cleanup)={raw_oil_px} "
+        f"cleaned_px(after cleanup)={cleaned_px} regions_after_cleanup={len(contour_list)}"
+    )
 
     # Gradient magnitude for the texture stats below -- same recipe as
     # cv_detect.run(), computed once and reused per region.
