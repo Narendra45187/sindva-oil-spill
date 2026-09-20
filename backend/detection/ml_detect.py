@@ -214,23 +214,27 @@ def _load_grayscale_uint8(image_path: str) -> np.ndarray:
 
 
 def _read_georeferencing(image_path: str, image_shape: tuple):
-    """(transform, crs) for pixel -> lon/lat conversion. Real georeferencing
-    when the file is a genuinely geo-tagged raster (a proper GeoTIFF);
-    otherwise a synthetic bounding box over the Visakhapatnam bay (see
-    _FALLBACK_* above), so a plain PNG/JPG upload -- or a TIFF with no geo
-    metadata -- still produces usable (if approximate) coordinates via the
-    exact same downstream geo helpers cv_detect.py uses, rather than
-    crashing."""
+    """(transform, crs, is_real_geo) for pixel -> lon/lat conversion.
+    is_real_geo is True only when the file is a genuinely geo-tagged raster
+    (a proper GeoTIFF) -- callers use it to decide whether a location on
+    the map is trustworthy enough to show at all (see detect_ml()'s
+    display_mode). Otherwise this falls back to a synthetic bounding box
+    over the Visakhapatnam bay (see _FALLBACK_* above), so a plain PNG/JPG
+    upload -- or a TIFF with no geo metadata -- still produces usable (if
+    approximate) coordinates via the exact same downstream geo helpers
+    cv_detect.py uses, rather than crashing; that fallback box is never
+    real georeferencing, just enough for the pipeline stages downstream of
+    detection (correlation/origin/forecast) to keep working numerically."""
     try:
         with rasterio.open(image_path) as ds:
             if ds.crs is not None:
-                return ds.transform, ds.crs
+                return ds.transform, ds.crs, True
     except rasterio.errors.RasterioIOError:
         pass
 
     h, w = image_shape
     transform = from_bounds(_FALLBACK_WEST, _FALLBACK_SOUTH, _FALLBACK_EAST, _FALLBACK_NORTH, w, h)
-    return transform, CRS.from_epsg(4326)
+    return transform, CRS.from_epsg(4326), False
 
 
 def image_bounds(image_path: str) -> dict:
@@ -239,7 +243,7 @@ def image_bounds(image_path: str) -> dict:
     of raising when the upload has no real georeferencing."""
     gray = _load_grayscale_uint8(image_path)
     h, w = gray.shape
-    transform, crs = _read_georeferencing(image_path, (h, w))
+    transform, crs, _is_real_geo = _read_georeferencing(image_path, (h, w))
     west, south, east, north = array_bounds(h, w, transform)
     west, south, east, north = transform_bounds(crs, "EPSG:4326", west, south, east, north)
     return {"south": south, "west": west, "north": north, "east": east}
@@ -337,7 +341,18 @@ def detect_ml(image_path: str, out_dir: str, timestamp: str) -> dict:
     os.makedirs(out_dir, exist_ok=True)
 
     gray = _load_grayscale_uint8(image_path)
-    src_transform, src_crs = _read_georeferencing(image_path, gray.shape)
+    src_transform, src_crs, is_real_geo = _read_georeferencing(image_path, gray.shape)
+
+    # Genuinely geo-tagged input (the bundled demo scene, or a real
+    # GeoTIFF upload) draws fine as a geographic ImageOverlay -- its bounds
+    # are real. A plain PNG/JPG (or a TIFF with no geo metadata) only has
+    # the synthetic Visakhapatnam-bay fallback bbox from _read_georeferencing,
+    # which is just enough for the numeric pipeline (correlation/origin/
+    # forecast) to keep working -- stretching its mask across an unrelated
+    # patch of the real bay/coastline is what made results look wrong (oil
+    # outlines landing on land). display_mode tells the frontend to show
+    # this case as a plain annotated image instead of a map overlay.
+    display_mode = "map" if is_real_geo else "image"
 
     prob_map, probs_256 = _run_inference(gray)
 
@@ -515,6 +530,23 @@ def detect_ml(image_path: str, out_dir: str, timestamp: str) -> dict:
         cv2.cvtColor(overlay_rgba, cv2.COLOR_RGBA2BGRA),
     )
 
+    # display_mode == "image" (no real georeferencing): also render a
+    # self-contained composite -- the uploaded image itself, converted to
+    # displayable RGB, with the SAME fill/outline/centroid/label pixels
+    # from overlay_rgba above alpha-blended directly onto it. This is what
+    # the frontend shows in a plain image panel instead of a map overlay,
+    # so a user sees their own SAR/SOS image with the predicted oil region
+    # drawn on it -- not a transparent shape alone (which needs the map, or
+    # reports' dark background, to read as anything).
+    display_image_filename = None
+    if display_mode == "image":
+        base_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR).astype(np.float32)
+        overlay_bgr = overlay_rgba[:, :, 2::-1].astype(np.float32)  # RGB -> BGR
+        alpha = (overlay_rgba[:, :, 3:4].astype(np.float32)) / 255.0
+        composite = np.clip(base_bgr * (1.0 - alpha) + overlay_bgr * alpha, 0, 255).astype(np.uint8)
+        display_image_filename = f"ml_display_{timestamp}.png"
+        cv2.imwrite(os.path.join(out_dir, display_image_filename), composite)
+
     return {
         "detected": detected,
         "centroid": centroid,
@@ -523,4 +555,6 @@ def detect_ml(image_path: str, out_dir: str, timestamp: str) -> dict:
         "regions": region_infos,
         "overlay_filename": overlay_filename,
         "mask_filename": mask_filename,
+        "display_mode": display_mode,
+        "display_image_filename": display_image_filename,
     }

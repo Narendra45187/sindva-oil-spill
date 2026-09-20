@@ -6,6 +6,7 @@ import TopBar from "@/components/TopBar";
 import NavBar from "@/components/NavBar";
 import ScenePanel from "@/components/ScenePanel";
 import VesselPanel from "@/components/VesselPanel";
+import ImageResultPanel from "@/components/ImageResultPanel";
 import { API_BASE, DEFAULT_SCENE } from "@/lib/config";
 import type {
   CorrelateResponse,
@@ -271,16 +272,20 @@ export default function Home() {
         </div>
 
         <div className="order-first min-h-[360px] lg:order-2 lg:min-h-0">
-          <MapStage
-            center={DEFAULT_SCENE.center}
-            result={result}
-            aisTracks={correlation?.ais_tracks ?? null}
-            suspects={correlation?.suspects ?? null}
-            selectedMmsi={selectedMmsi}
-            onSelectVessel={setSelectedMmsi}
-            origin={origin}
-            forecast={forecast}
-          />
+          {result?.meta.display_mode === "image" ? (
+            <ImageResultPanel result={result} />
+          ) : (
+            <MapStage
+              center={DEFAULT_SCENE.center}
+              result={result}
+              aisTracks={correlation?.ais_tracks ?? null}
+              suspects={correlation?.suspects ?? null}
+              selectedMmsi={selectedMmsi}
+              onSelectVessel={setSelectedMmsi}
+              origin={origin}
+              forecast={forecast}
+            />
+          )}
         </div>
 
         <div className="min-h-0 rounded-xl border border-line bg-panel/40 lg:order-3">

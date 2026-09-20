@@ -234,14 +234,32 @@ async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
         "regions": result["regions"],
         "timestamp": timestamp,
         "detection_method": ml_detect.DETECTION_METHOD_ML,
+        # "map" for genuinely geo-tagged input (the default demo scene, or a
+        # real GeoTIFF upload) -- the frontend draws it as a Leaflet
+        # ImageOverlay exactly as it always has. "image" for a plain
+        # PNG/JPG (or a TIFF with no geo metadata), which only ever had a
+        # synthetic fallback bounding box -- the frontend shows
+        # display_image_url in a plain image panel instead, so the
+        # prediction never gets stretched across an unrelated patch of the
+        # real map (e.g. showing an oil outline sitting on land).
+        "display_mode": result["display_mode"],
     }
 
     overlay_url = f"/outputs/{result['overlay_filename']}"
     mask_url = f"/outputs/{result['mask_filename']}"
+    display_image_url = (
+        f"/outputs/{result['display_image_filename']}" if result.get("display_image_filename") else None
+    )
 
     with open(SPILL_METADATA_PATH, "w") as f:
         json.dump(
-            {**meta, "scene_timestamp": SCENE["timestamp"], "overlay_url": overlay_url, "mask_url": mask_url},
+            {
+                **meta,
+                "scene_timestamp": SCENE["timestamp"],
+                "overlay_url": overlay_url,
+                "mask_url": mask_url,
+                "display_image_url": display_image_url,
+            },
             f,
         )
     if os.path.exists(LATEST_CORRELATION_PATH):
@@ -253,6 +271,10 @@ async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
         "scene": SCENE,
         "overlay_url": overlay_url,
         "mask_url": mask_url,
+        # Only non-null when meta.display_mode == "image" -- the uploaded
+        # image itself with the predicted oil region drawn on it, sized to
+        # that image's own dimensions (see ml_detect.detect_ml()).
+        "display_image_url": display_image_url,
     }
 
 
