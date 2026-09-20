@@ -41,14 +41,12 @@ export interface DetectionMeta {
   region_count: number;
   regions: DetectedRegion[];
   timestamp: string;
+  // Which detector produced this result -- also which display it gets:
+  // "Classic CV" always renders on the Leaflet map (MapStage, unchanged);
+  // "AI / U-Net" always renders as a side-by-side input/mask image pair
+  // (MLResultPanel), never on the map, since an uploaded SOS image has no
+  // real geographic relation to the fixed Visakhapatnam scene.
   detection_method: "Classic CV" | "AI / U-Net";
-  // Only set by /api/detect_ml (absent -- treat as "map" -- on the
-  // Classic-CV /api/detect response, which always has real georeferencing
-  // for its own inputs). "image": no real georeferencing was found for
-  // this upload (a plain PNG/JPG, or a TIFF with no geo metadata), so
-  // display_image_url below should be shown as a plain annotated image
-  // instead of projected onto the Leaflet map.
-  display_mode?: "map" | "image";
 }
 
 export interface DetectResponse {
@@ -57,9 +55,12 @@ export interface DetectResponse {
   scene: Scene;
   overlay_url: string;
   mask_url: string;
-  // Only non-null when meta.display_mode === "image" -- the uploaded image
-  // itself with the predicted oil region drawn directly on it.
-  display_image_url?: string | null;
+  // Only present on /api/detect_ml responses -- the two halves of the
+  // side-by-side ML result view. input_image_url is the uploaded image
+  // exactly as fed to the model; display_image_url is that same image
+  // with the predicted oil region drawn on it.
+  input_image_url?: string;
+  display_image_url?: string;
 }
 
 // --- Module 2: AIS vessel correlation ---

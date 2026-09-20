@@ -234,22 +234,17 @@ async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
         "regions": result["regions"],
         "timestamp": timestamp,
         "detection_method": ml_detect.DETECTION_METHOD_ML,
-        # "map" for genuinely geo-tagged input (the default demo scene, or a
-        # real GeoTIFF upload) -- the frontend draws it as a Leaflet
-        # ImageOverlay exactly as it always has. "image" for a plain
-        # PNG/JPG (or a TIFF with no geo metadata), which only ever had a
-        # synthetic fallback bounding box -- the frontend shows
-        # display_image_url in a plain image panel instead, so the
-        # prediction never gets stretched across an unrelated patch of the
-        # real map (e.g. showing an oil outline sitting on land).
-        "display_mode": result["display_mode"],
     }
 
     overlay_url = f"/outputs/{result['overlay_filename']}"
     mask_url = f"/outputs/{result['mask_filename']}"
-    display_image_url = (
-        f"/outputs/{result['display_image_filename']}" if result.get("display_image_filename") else None
-    )
+    # The two halves of the frontend's side-by-side ML result view (see
+    # components/MLResultPanel.tsx): input_image_url is the uploaded image
+    # exactly as fed to the model; display_image_url is the SAME image with
+    # the predicted oil region drawn on it. Classic-CV's /api/detect has no
+    # equivalent of either -- its result still only ever goes on the map.
+    input_image_url = f"/outputs/{result['input_image_filename']}"
+    display_image_url = f"/outputs/{result['display_image_filename']}"
 
     with open(SPILL_METADATA_PATH, "w") as f:
         json.dump(
@@ -258,6 +253,7 @@ async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
                 "scene_timestamp": SCENE["timestamp"],
                 "overlay_url": overlay_url,
                 "mask_url": mask_url,
+                "input_image_url": input_image_url,
                 "display_image_url": display_image_url,
             },
             f,
@@ -271,9 +267,7 @@ async def detect_ml_endpoint(file: UploadFile | None = File(default=None)):
         "scene": SCENE,
         "overlay_url": overlay_url,
         "mask_url": mask_url,
-        # Only non-null when meta.display_mode == "image" -- the uploaded
-        # image itself with the predicted oil region drawn on it, sized to
-        # that image's own dimensions (see ml_detect.detect_ml()).
+        "input_image_url": input_image_url,
         "display_image_url": display_image_url,
     }
 

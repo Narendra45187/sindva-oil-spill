@@ -6,7 +6,7 @@ import TopBar from "@/components/TopBar";
 import NavBar from "@/components/NavBar";
 import ScenePanel from "@/components/ScenePanel";
 import VesselPanel from "@/components/VesselPanel";
-import ImageResultPanel from "@/components/ImageResultPanel";
+import MLResultPanel from "@/components/MLResultPanel";
 import { API_BASE, DEFAULT_SCENE } from "@/lib/config";
 import type {
   CorrelateResponse,
@@ -272,8 +272,8 @@ export default function Home() {
         </div>
 
         <div className="order-first min-h-[360px] lg:order-2 lg:min-h-0">
-          {result?.meta.display_mode === "image" ? (
-            <ImageResultPanel result={result} />
+          {result?.meta.detection_method === "AI / U-Net" ? (
+            <MLResultPanel result={result} />
           ) : (
             <MapStage
               center={DEFAULT_SCENE.center}
